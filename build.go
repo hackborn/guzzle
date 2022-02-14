@@ -16,7 +16,7 @@ func buildSteps(cfg Cfg) ([]Step, error) {
 		steps = append(steps, CloneOrPullStep{Repo: remote, LocalFolder: local})
 		switch strings.ToLower(repo.Language) {
 		case "go":
-			steps = append(steps, GoDependencies{OutputFolder: cfg.Output, LocalFolder: local})
+			steps = append(steps, GoModStep{OutputFolder: cfg.Output, LocalFolder: local})
 		}
 	}
 	return steps, nil
