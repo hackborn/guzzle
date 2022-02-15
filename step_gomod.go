@@ -12,7 +12,7 @@ import (
 
 // GoModStep finds and clones dependencies for Go go.mod files.
 type GoModStep struct {
-	Repo         string
+	Repo         Repo
 	OutputFolder string
 	LocalFolder  string
 }
@@ -104,26 +104,82 @@ func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDepend
 	}
 
 	for key, dep := range deps {
-		if key != `golang.org/x/xerrors-a985d3407aa7` {
-			//			continue
+		if !strings.Contains(key, `genproto`) {
+			// continue
 		}
 		remote := dep.Repo
-		folder := filepath.Join(dst, dep.Repo+"-"+dep.Version.id)
+		folder := filepath.Join(dst, dep.Repo+versionSeparator+dep.Version.id)
 		checkout := dep.Version.gitCheckout()
 		// Clone if needed
-		steps := []Step{CloneStep{remote, folder}, CheckoutStep{folder, checkout}}
-		steps = []Step{OnPathNotExists(folder, steps)}
+		steps := s.makeCloneSteps(p, dep.Repo, dst, remote, folder, checkout)
+		//		steps := []Step{CloneStep{remote, folder}, CheckoutStep{folder, checkout}}
+		//		steps = []Step{OnPathNotExists(folder, steps)}
 		// Thin
 		steps = append(steps, s.makeThinningSteps(p, folder)...)
 		err = runSteps(p, steps)
 		if err != nil {
-			err = wrapErr(err, fmt.Sprintf("key %v go.mod %v to %v from repo %v", key, dep.Raw, folder, s.Repo))
+			err = wrapErr(err, fmt.Sprintf("key %v go.mod %v to %v from repo %v", key, dep.Raw, folder, s.Repo.Name))
 			// Useful if you want everyone to complete and see the final errors
 			// p.AddError(err)
 			return err
 		}
 	}
 	return nil
+}
+
+// makeCloneSteps answers a pipeline for cloning the repo
+// (or copying it if there's a copy rule).
+func (s GoModStep) makeCloneSteps(p StepParams, depRepo, commonCode, remote, folder, checkout string) []Step {
+	// Copy if there's a copy rule for this repo
+	copy := s.Repo.RepoCopyFrom(depRepo)
+	if copy != nil {
+		return s.makeCopySteps(p, *copy, depRepo, commonCode, remote, folder)
+	}
+	// Clone if needed
+	steps := []Step{CloneStep{remote, folder}, CheckoutStep{folder, checkout}}
+	steps = []Step{OnPathNotExists(folder, steps)}
+	return steps
+}
+
+// makeCopySteps answers steps a pipeline for copying the
+// repo from a local folder.
+func (s GoModStep) makeCopySteps(p StepParams, copy RepoCopy, depRepo, commonCode, remote, folder string) []Step {
+	steps := []Step{}
+	for _, src := range copy.To {
+		src, dst, ok := s.makeCopySrcDst(src, commonCode)
+		if ok {
+			steps = append(steps, CopyStep{src, dst})
+		}
+	}
+	return steps
+}
+
+// makeCopySrcDst expands the source and dest strings to
+// absolute paths.
+// NOTE: This is very much based on my local env. Burning
+// through some of these pieces as fast as I can.
+// Return true if what will be the new directory does not exist.
+func (s GoModStep) makeCopySrcDst(src, dst string) (string, string, bool) {
+	gomodpathVar := `$GOMODPATH`
+	if strings.HasPrefix(src, gomodpathVar) {
+		// Example "$GOMODPATH/cloud.google.com/go/speech"
+		trunk := strings.TrimPrefix(src, gomodpathVar)
+		gopath := os.Getenv("GOPATH")
+		if gopath == "" {
+			panic("no GOPATH")
+		}
+		gomodpath := filepath.Join(gopath, "pkg", "mod")
+		src = filepath.Join(gomodpath, trunk)
+		if fsNotExists(src) {
+			panic("no src " + src)
+		}
+		dst = filepath.Join(dst, trunk)
+		if fsExists(dst) {
+			return "", "", false
+		}
+		return src, filepath.Dir(dst), true
+	}
+	panic("unhandled copy paths src " + src + " dst " + dst)
 }
 
 func (s GoModStep) makeThinningSteps(p StepParams, folder string) []Step {
@@ -152,7 +208,7 @@ func makeGoModDependency(raw string) (string, GoModDependency) {
 	}
 	repo := fields[0]
 	version := makeGoModVersion(fields[1])
-	return repo + "-" + version.id, GoModDependency{Repo: repo, Version: version, Raw: raw}
+	return repo + versionSeparator + version.id, GoModDependency{Repo: repo, Version: version, Raw: raw}
 }
 
 // GoModVersion represents a version from a go.sum file.
@@ -206,4 +262,8 @@ type GoModVersionType uint8
 const (
 	GoModVersionTag    GoModVersionType = 1 << iota // A tag version i.e. "v1.36.29"
 	GoModVersionCommit                              // A SHA commit i.e. "v0.0.0-20200922220541-2c3bb06c6054"
+)
+
+const (
+	versionSeparator = `@`
 )

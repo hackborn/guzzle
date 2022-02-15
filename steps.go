@@ -151,6 +151,17 @@ func (s CloneOrPullStep) Run(p StepParams) error {
 	}
 }
 
+// CopyStep performs a copy.
+type CopyStep struct {
+	Src string
+	Dst string
+}
+
+func (s CopyStep) Run(p StepParams) error {
+	fmt.Println("copy", s.Src, "to", s.Dst)
+	return fsCopyDir(s.Src, s.Dst)
+}
+
 // PullStep performs a git pull.
 type PullStep struct {
 	Repo        string

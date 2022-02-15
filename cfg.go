@@ -16,8 +16,23 @@ type Cfg struct {
 }
 
 type Repo struct {
-	Name     string `json:"name,omitempty"`
-	Language string `json:"language,omitempty"`
+	Name     string     `json:"name,omitempty"`
+	Language string     `json:"language,omitempty"`
+	Copy     []RepoCopy `json:"copy,omitempty"`
+}
+
+func (r Repo) RepoCopyFrom(repo string) *RepoCopy {
+	for _, rc := range r.Copy {
+		if rc.From == repo {
+			return &rc
+		}
+	}
+	return nil
+}
+
+type RepoCopy struct {
+	From string   `json:"from,omitempty"`
+	To   []string `json:"to,omitempty"`
 }
 
 func LoadCfgLocal(path string) (Cfg, error) {
