@@ -94,7 +94,7 @@ func (s GoSumStep) cloneDependencies(p StepParams, deps map[string]GoSumDependen
 		if key != `golang.org/x/xerrors-a985d3407aa7` {
 			continue
 		}
-		remote := p.Cfg.RemoteRepo(dep.Repo)
+		remote := dep.Repo
 		folder := filepath.Join(dst, dep.Repo+"-"+dep.Version.id)
 		err = runSteps(p, []Step{CloneOrPullStep{remote, folder}, CheckoutStep{folder, dep.Version.gitCheckout()}})
 		if err != nil {

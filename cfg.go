@@ -42,13 +42,12 @@ func LoadCfg(f fs.FS, path string) (Cfg, error) {
 	return cfg, err
 }
 
-func (c Cfg) RemoteRepo(repo string) string {
-	// Nothing fancy here -- just convert to the one known format I use.
-	switch c.RepoFormat {
-	case "git_ssh":
-		return c.formatGitSsh(repo)
-	}
-	return repo
+func (c Cfg) RemoteRepoHttps(repo string) string {
+	return c.formatGitHttps(repo)
+}
+
+func (c Cfg) RemoteRepoSsh(repo string) string {
+	return c.formatGitSsh(repo)
 }
 
 func (c Cfg) LocalRepo(repo string) string {
@@ -57,6 +56,10 @@ func (c Cfg) LocalRepo(repo string) string {
 		return ""
 	}
 	return filepath.Join(c.Output, repo[pos+1:])
+}
+
+func (c Cfg) formatGitHttps(s string) string {
+	return "https://" + s
 }
 
 func (c Cfg) formatGitSsh(s string) string {

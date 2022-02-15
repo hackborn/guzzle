@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Step interface {
@@ -76,10 +78,62 @@ type CloneStep struct {
 }
 
 func (s CloneStep) Run(p StepParams) error {
-	fmt.Println("git clone", s.Repo, s.LocalFolder)
-	cmd := exec.Command("git", "clone", s.Repo, s.LocalFolder)
+	// This is more complicated than I'd like it because I don't
+	// know how I can access each repo.
+	err, redirect := s.tryClone(p, p.Cfg.RemoteRepoSsh(s.Repo))
+	if err == nil {
+		return nil
+	}
+	err, redirect = s.tryClone(p, p.Cfg.RemoteRepoHttps(s.Repo))
+	if err == nil {
+		return nil
+	}
+	err, _ = s.tryClone(p, redirect)
+	return err
+	/*
+		fmt.Println("git clone", s.Repo, s.LocalFolder)
+		cmd := exec.Command("git", "clone", s.Repo, s.LocalFolder)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			fmt.Println("done printing lines", string(stderr.Bytes()))
+		}
+		return wrapErr(err, string(out))
+	*/
+}
+
+func (s CloneStep) tryClone(p StepParams, repo string) (error, string) {
+	// This is more complicated than I'd like it because I don't
+	// know how I can access each repo.
+	redirect := repo
+	fmt.Println("git clone", repo, s.LocalFolder)
+	cmd := exec.Command("git", "clone", repo, s.LocalFolder)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	return wrapErr(err, string(out))
+	msg := string(stderr.Bytes())
+	if err != nil {
+		if strings.Contains(msg, `ssh: connect to host`) && strings.Contains(msg, `fatal: Could not read from remote repository.`) {
+			return errSshNotValid, redirect
+		}
+		r := s.getRedirect(msg)
+		if r != "" {
+			redirect = r
+		}
+	}
+	return wrapErr(err, string(out)+" "+msg), redirect
+}
+
+func (s CloneStep) getRedirect(str string) string {
+	pre := `remote: Use 'git clone `
+	suf := `' instead`
+	if strings.Contains(str, pre) && strings.Contains(str, suf) {
+		pi := strings.Index(str, pre)
+		si := strings.Index(str, suf)
+		return str[pi+len(pre) : si]
+	}
+	return ""
 }
 
 // CloneOrPullStep performs a git pull if the local folder exists,
@@ -175,4 +229,6 @@ func (s DeleteStep) needsDelete(path string) bool {
 
 var (
 	gitDeletes = []string{`.git`, `.github`, `.gitignore`}
+
+	errSshNotValid = fmt.Errorf("SSH not valid")
 )

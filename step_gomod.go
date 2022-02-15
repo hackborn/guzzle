@@ -12,6 +12,7 @@ import (
 
 // GoModStep finds and clones dependencies for Go go.mod files.
 type GoModStep struct {
+	Repo         string
 	OutputFolder string
 	LocalFolder  string
 }
@@ -106,7 +107,7 @@ func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDepend
 		if key != `golang.org/x/xerrors-a985d3407aa7` {
 			//			continue
 		}
-		remote := p.Cfg.RemoteRepo(dep.Repo)
+		remote := dep.Repo
 		folder := filepath.Join(dst, dep.Repo+"-"+dep.Version.id)
 		checkout := dep.Version.gitCheckout()
 		// Clone if needed
@@ -116,7 +117,7 @@ func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDepend
 		steps = append(steps, s.makeThinningSteps(p, folder)...)
 		err = runSteps(p, steps)
 		if err != nil {
-			err = wrapErr(err, fmt.Sprintf("key %v go.mod %v to %v", key, dep.Raw, folder))
+			err = wrapErr(err, fmt.Sprintf("key %v go.mod %v to %v from repo %v", key, dep.Raw, folder, s.Repo))
 			// Useful if you want everyone to complete and see the final errors
 			// p.AddError(err)
 			return err
@@ -127,7 +128,7 @@ func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDepend
 
 func (s GoModStep) makeThinningSteps(p StepParams, folder string) []Step {
 	// Audit
-	return []Step{AuditStep{Folder: folder}}
+	//	return []Step{AuditStep{Folder: folder}}
 	return []Step{DeleteGitStep{Folder: folder}}
 }
 
@@ -164,6 +165,7 @@ type GoModVersion struct {
 // makeGoVersion translates a go.sum commit tag to a version structure.
 // Formats I'm aware of:
 // * version tag: "v1.36.29"
+// * version tag with incompatible repo structure: "v2.1.0+incompatible"
 // * commit sha: "v0.0.0-20200922220541-2c3bb06c6054"
 func makeGoModVersion(commit string) GoModVersion {
 	if !strings.HasPrefix(commit, "v") {
@@ -172,6 +174,10 @@ func makeGoModVersion(commit string) GoModVersion {
 	split := strings.Split(commit, "-")
 	switch len(split) {
 	case 1:
+		incompatible := `+incompatible`
+		if strings.HasSuffix(split[0], incompatible) {
+			return GoModVersion{GoModVersionTag, commit, strings.TrimSuffix(split[0], incompatible)}
+		}
 		return GoModVersion{GoModVersionTag, commit, split[0]}
 	case 3:
 		return GoModVersion{GoModVersionCommit, commit, split[2]}
