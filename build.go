@@ -18,12 +18,20 @@ func buildSteps(cfg Cfg) ([]Step, error) {
 		if local == "" {
 			panic("No local folder for repo " + repo.Name)
 		}
-		// If the local folder exists we pull, otherwise clone.
-		steps = append(steps, CloneOrPullStep{Repo: remote, LocalFolder: local})
+		// Clone if needed. Once we have a clone we thin out the data,
+		// which removes git info. If you want to reclone, you need to
+		// manually remove it from the output.
+		cloneSteps := []Step{CloneStep{Repo: remote, LocalFolder: local}}
+		steps = append(steps, []Step{OnPathNotExists(local, cloneSteps)}...)
+		// Add generic thinning
 		switch strings.ToLower(repo.Language) {
 		case "go":
 			steps = append(steps, GoModStep{Repo: repo, OutputFolder: cfg.Output, LocalFolder: local})
+		case "c#":
+			steps = append(steps, AuditStep{Folder: local})
 		}
+		// Remove git data
+		steps = append(steps, DeleteGitStep{Folder: local})
 	}
 	return steps, nil
 }

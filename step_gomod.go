@@ -19,11 +19,11 @@ type GoModStep struct {
 
 func (s GoModStep) Run(p StepParams) error {
 	fmt.Println("gomod to", s.LocalFolder)
-	sums, err := s.gatherMods()
+	mods, err := s.gatherMods()
 	if err != nil {
 		return err
 	}
-	deps, err := s.gatherDependencies(sums)
+	deps, err := s.gatherDependencies(mods)
 	if err != nil {
 		return err
 	}

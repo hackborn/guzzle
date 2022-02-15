@@ -136,21 +136,6 @@ func (s CloneStep) getRedirect(str string) string {
 	return ""
 }
 
-// CloneOrPullStep performs a git pull if the local folder exists,
-// otherwise a git clone.
-type CloneOrPullStep struct {
-	Repo        string
-	LocalFolder string
-}
-
-func (s CloneOrPullStep) Run(p StepParams) error {
-	if _, err := os.Stat(s.LocalFolder); os.IsNotExist(err) {
-		return CloneStep{Repo: s.Repo, LocalFolder: s.LocalFolder}.Run(p)
-	} else {
-		return PullStep{Repo: s.Repo, LocalFolder: s.LocalFolder}.Run(p)
-	}
-}
-
 // CopyStep performs a copy.
 type CopyStep struct {
 	Src string
