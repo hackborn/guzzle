@@ -9,10 +9,11 @@ import (
 )
 
 type Cfg struct {
-	Output       string `json:"output,omitempty"`
-	RepoFormat   string `json:"repo_format,omitempty"`
-	RepoLanguage string `json:"repo_language,omitempty"`
-	Repos        []Repo `json:"repos,omitempty"`
+	Output        string         `json:"output,omitempty"`
+	RepoFormat    string         `json:"repo_format,omitempty"`
+	RepoLanguage  string         `json:"repo_language,omitempty"`
+	Repos         []Repo         `json:"repos,omitempty"`
+	RepoRedirects []RepoRedirect `json:"repo_redirects,omitempty"`
 }
 
 type Repo struct {
@@ -33,6 +34,11 @@ func (r Repo) RepoCopyFrom(repo string) *RepoCopy {
 type RepoCopy struct {
 	From string   `json:"from,omitempty"`
 	To   []string `json:"to,omitempty"`
+}
+
+type RepoRedirect struct {
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 func LoadCfgLocal(path string) (Cfg, error) {
@@ -71,6 +77,15 @@ func (c Cfg) LocalRepo(repo string) string {
 		return ""
 	}
 	return filepath.Join(c.Output, repo[pos+1:])
+}
+
+func (c Cfg) GetRedirect(repo string) string {
+	for _, d := range c.RepoRedirects {
+		if d.From == repo {
+			return d.To
+		}
+	}
+	return repo
 }
 
 func (c Cfg) formatGitHttps(s string) string {

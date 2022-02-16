@@ -15,8 +15,9 @@ type Step interface {
 }
 
 type StepParams struct {
-	Cfg    Cfg
-	Output *StepOutput
+	Cfg              Cfg
+	CommonCodeFolder string
+	Output           *StepOutput
 }
 
 func (p StepParams) AddError(err error) {
@@ -66,9 +67,17 @@ func (s CheckoutStep) Run(p StepParams) error {
 	fmt.Println("git checkout", s.Commit)
 	fmt.Println("\t", s.LocalFolder)
 	cmd := exec.Command("git", "checkout", s.Commit)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	cmd.Dir = s.LocalFolder
 	out, err := cmd.Output()
-	return wrapErr(err, string(out))
+	if err != nil {
+		// I don't really know what to do with checkout errors
+		// Some repos do not seem to have tags that correspond
+		// to the tag in the go.mod.
+		p.AddError(fmt.Errorf("%w out: %v err: %v", err, string(out), string(stderr.Bytes())))
+	}
+	return nil
 }
 
 // CloneStep performs a git clone.
@@ -90,17 +99,6 @@ func (s CloneStep) Run(p StepParams) error {
 	}
 	err, _ = s.tryClone(p, redirect)
 	return err
-	/*
-		fmt.Println("git clone", s.Repo, s.LocalFolder)
-		cmd := exec.Command("git", "clone", s.Repo, s.LocalFolder)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		out, err := cmd.Output()
-		if err != nil {
-			fmt.Println("done printing lines", string(stderr.Bytes()))
-		}
-		return wrapErr(err, string(out))
-	*/
 }
 
 func (s CloneStep) tryClone(p StepParams, repo string) (error, string) {

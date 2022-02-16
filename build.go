@@ -29,6 +29,7 @@ func buildSteps(cfg Cfg) ([]Step, error) {
 			steps = append(steps, GoModStep{Repo: repo, OutputFolder: cfg.Output, LocalFolder: local})
 		case "c#":
 			steps = append(steps, AuditStep{Folder: local})
+			steps = append(steps, VsPackagesStep{Folder: local})
 		}
 		// Remove git data
 		steps = append(steps, DeleteGitStep{Folder: local})

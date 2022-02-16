@@ -18,12 +18,12 @@ type GoModStep struct {
 }
 
 func (s GoModStep) Run(p StepParams) error {
-	fmt.Println("gomod to", s.LocalFolder)
+	fmt.Println("gomod on", s.LocalFolder)
 	mods, err := s.gatherMods()
 	if err != nil {
 		return err
 	}
-	deps, err := s.gatherDependencies(mods)
+	deps, err := s.gatherDependencies(p, mods)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (s GoModStep) gatherMods() ([]string, error) {
 }
 
 // gatherDependencies finds all dependencies for the mod files.
-func (s GoModStep) gatherDependencies(sums []string) (map[string]GoModDependency, error) {
+func (s GoModStep) gatherDependencies(p StepParams, sums []string) (map[string]GoModDependency, error) {
 	deps := make(map[string]GoModDependency)
 	f := os.DirFS(s.LocalFolder)
 	for _, path := range sums {
@@ -67,7 +67,7 @@ func (s GoModStep) gatherDependencies(sums []string) (map[string]GoModDependency
 			return nil, err
 		}
 		for _, line := range lines {
-			key, dep := makeGoModDependency(line)
+			key, dep := makeGoModDependency(p, line)
 			deps[key] = dep
 		}
 	}
@@ -76,20 +76,25 @@ func (s GoModStep) gatherDependencies(sums []string) (map[string]GoModDependency
 
 func (s GoModStep) getRequireBlock(fileBytes []byte) ([]string, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(fileBytes))
-	inBlock := false
+	inRequireBlock := false
 	var lines []string
 	for scanner.Scan() {
 		line := scanner.Text()
-		if inBlock {
+		if inRequireBlock {
 			if line == ")" {
 				return lines, nil
 			}
 			lines = append(lines, line)
 		} else {
 			if line == "require (" {
-				inBlock = true
+				inRequireBlock = true
+			} else if strings.HasPrefix(line, "require ") {
+				lines = append(lines, strings.TrimPrefix(line, "require "))
 			}
 		}
+	}
+	if len(lines) > 0 {
+		return lines, nil
 	}
 	return lines, fmt.Errorf("no require block in go.mod")
 }
@@ -97,12 +102,7 @@ func (s GoModStep) getRequireBlock(fileBytes []byte) ([]string, error) {
 // processDependencies processes the dependency lists, which
 // means optionally cloning the repo, and then thinning the data.
 func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDependency) error {
-	dst := filepath.Join(s.OutputFolder, "Common Code")
-	err := os.MkdirAll(dst, os.ModePerm)
-	if err != nil {
-		return err
-	}
-
+	dst := p.CommonCodeFolder
 	for key, dep := range deps {
 		if !strings.Contains(key, `genproto`) {
 			// continue
@@ -112,11 +112,9 @@ func (s GoModStep) processDependencies(p StepParams, deps map[string]GoModDepend
 		checkout := dep.Version.gitCheckout()
 		// Clone if needed
 		steps := s.makeCloneSteps(p, dep.Repo, dst, remote, folder, checkout)
-		//		steps := []Step{CloneStep{remote, folder}, CheckoutStep{folder, checkout}}
-		//		steps = []Step{OnPathNotExists(folder, steps)}
 		// Thin
 		steps = append(steps, s.makeThinningSteps(p, folder)...)
-		err = runSteps(p, steps)
+		err := runSteps(p, steps)
 		if err != nil {
 			err = wrapErr(err, fmt.Sprintf("key %v go.mod %v to %v from repo %v", key, dep.Raw, folder, s.Repo.Name))
 			// Useful if you want everyone to complete and see the final errors
@@ -199,7 +197,7 @@ type GoModDependency struct {
 
 // makeGoModDependency creates a dependency from a line in the
 // go.mod file.
-func makeGoModDependency(raw string) (string, GoModDependency) {
+func makeGoModDependency(p StepParams, raw string) (string, GoModDependency) {
 	// There need to be at least two fields, and the second
 	// needs to start with "v"
 	fields := strings.Fields(raw)
@@ -207,6 +205,12 @@ func makeGoModDependency(raw string) (string, GoModDependency) {
 		panic("invalid go.mod entry:" + raw)
 	}
 	repo := fields[0]
+	redirect := p.Cfg.GetRedirect(repo)
+	if redirect != repo {
+		repo = redirect
+	} else {
+		repo = makeGoModRepo(repo)
+	}
 	version := makeGoModVersion(fields[1])
 	return repo + versionSeparator + version.id, GoModDependency{Repo: repo, Version: version, Raw: raw}
 }
@@ -218,9 +222,27 @@ type GoModVersion struct {
 	id         string // The unique portion of the version
 }
 
+// makeGoModRepo answers the repo from the string in the go.mod
+// To the best of my knowledge, we want to ignore anything past 3 levels.
+func makeGoModRepo(r string) string {
+	all := strings.Split(r, "/")
+	ans := ""
+	for i, e := range all {
+		if i >= 3 {
+			break
+		}
+		if ans != "" {
+			ans += "/"
+		}
+		ans += e
+	}
+	return ans
+}
+
 // makeGoVersion translates a go.sum commit tag to a version structure.
 // Formats I'm aware of:
 // * version tag: "v1.36.29"
+// * extended version tag: "v0.0.0-only-publish-on-tag.0"
 // * version tag with incompatible repo structure: "v2.1.0+incompatible"
 // * commit sha: "v0.0.0-20200922220541-2c3bb06c6054"
 func makeGoModVersion(commit string) GoModVersion {
@@ -238,7 +260,9 @@ func makeGoModVersion(commit string) GoModVersion {
 	case 3:
 		return GoModVersion{GoModVersionCommit, commit, split[2]}
 	default:
-		panic("unknown commit: " + commit)
+		// Just let through the raw tag and see what happens!
+		// panic("unknown commit: " + commit)
+		return GoModVersion{GoModVersionTag, commit, commit}
 	}
 }
 
