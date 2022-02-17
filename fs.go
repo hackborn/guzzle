@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -60,4 +63,24 @@ func fsReadBytes(dir fs.FS, path string) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+func fsDirEmpty(sys fs.FS, path string) (bool, error) {
+	f, err := sys.Open(path)
+	if err != nil {
+		err = fmt.Errorf("open err %v %w", path, err)
+		return false, err
+	}
+	defer f.Close()
+	rd, ok := f.(fs.ReadDirFile)
+	if !ok {
+		return false, fmt.Errorf("ReadDirFS not supported")
+	}
+	entries, err := rd.ReadDir(1)
+	// EOF indicates is the main way we know it's
+	// empty, but we'll also take an empty response.
+	if errors.Is(err, io.EOF) || (err == nil && len(entries) < 1) {
+		return true, nil
+	}
+	return false, err
 }

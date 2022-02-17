@@ -18,6 +18,7 @@ type Cfg struct {
 
 type Repo struct {
 	Name     string     `json:"name,omitempty"`
+	Branch   string     `json:"branch,omitempty"`
 	Language string     `json:"language,omitempty"`
 	Copy     []RepoCopy `json:"copy,omitempty"`
 }

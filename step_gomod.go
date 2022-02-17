@@ -33,8 +33,7 @@ func (s GoModStep) Run(p StepParams) error {
 	return s.processDependencies(p, deps)
 }
 
-// gatherMods gathers all the go.mod files. Currently restricted to
-// top level but might expand if there's reason.
+// gatherMods gathers all the go.mod files.
 func (s GoModStep) gatherMods() ([]string, error) {
 	var sums []string
 	f := os.DirFS(s.LocalFolder)
@@ -42,10 +41,8 @@ func (s GoModStep) gatherMods() ([]string, error) {
 		if path == "." {
 			return nil
 		}
-		if d.IsDir() {
-			return fs.SkipDir
-		}
-		if path == "go.mod" {
+		base := filepath.Base(path)
+		if base == "go.mod" {
 			sums = append(sums, path)
 		}
 		return nil
@@ -183,7 +180,8 @@ func (s GoModStep) makeCopySrcDst(src, dst string) (string, string, bool) {
 func (s GoModStep) makeThinningSteps(p StepParams, folder string) []Step {
 	// Audit
 	//	return []Step{AuditStep{Folder: folder}}
-	return []Step{DeleteGitStep{Folder: folder}}
+	empty := DeleteEmptyFoldersStep{Folder: folder, IncludeGit: true}
+	return []Step{DeleteGitStep{Folder: folder}, empty}
 }
 
 // ------------------------------------------------------------

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -37,24 +38,58 @@ type AuditStep struct {
 
 func (s AuditStep) Run(p StepParams) error {
 	fmt.Println("audit", s.Folder)
-	types := make(map[string]int)
+	types := make(map[string]AuditRow)
 	f := os.DirFS(s.Folder)
 	fs.WalkDir(f, ".", func(path string, d fs.DirEntry, err error) error {
 		if path == "." {
 			return nil
 		}
 		if !d.IsDir() {
-			ext := filepath.Ext(path)
-			if count, ok := types[ext]; ok {
-				types[ext] = count + 1
+			var size int64 = 0
+			if fi, err := d.Info(); err == nil {
+				size = fi.Size()
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if row, ok := types[ext]; ok {
+				row.Count += 1
+				row.Size += size
+				types[ext] = row
 			} else {
-				types[ext] = 1
+				types[ext] = AuditRow{Name: ext, Size: size, Count: 1}
 			}
 		}
 		return nil
 	})
-	fmt.Println(types)
+	var rows []AuditRow
+	for _, r := range types {
+		rows = append(rows, r)
+	}
+	sort.Sort(SortAuditRowBySize(rows))
+	for i := len(rows) - 1; i >= 0; i-- {
+		fmt.Println(rows[i])
+	}
 	return nil
+}
+
+type AuditRow struct {
+	Name  string
+	Size  int64
+	Count int
+}
+
+type SortAuditRowBySize []AuditRow
+
+func (s SortAuditRowBySize) Len() int {
+	return len(s)
+}
+func (s SortAuditRowBySize) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s SortAuditRowBySize) Less(i, j int) bool {
+	if s[i].Size < s[j].Size {
+		return true
+	}
+	return s[i].Size < s[j].Size
 }
 
 // CheckoutStep performs a git checkout.
@@ -145,35 +180,29 @@ func (s CopyStep) Run(p StepParams) error {
 	return fsCopyDir(s.Src, s.Dst)
 }
 
-// PullStep performs a git pull.
-type PullStep struct {
-	Repo        string
-	LocalFolder string
-}
-
-func (s PullStep) Run(p StepParams) error {
-	// Git pull is happening without a current branch.
-	// In practise, don't think we actually should have
-	// the git pull step, we're always getting a specific commit.
-	return nil
-	/*
-		fmt.Println("git pull")
-		fmt.Println("\t", s.LocalFolder)
-		cmd := exec.Command("git", "pull")
-		cmd.Dir = s.LocalFolder
-		out, err := cmd.Output()
-		return wrapErr(err, string(out))
-	*/
-}
-
 // DeleteGitStep deletes .git related data.
 type DeleteGitStep struct {
 	Folder string
-	Ext    []string
 }
 
 func (s DeleteGitStep) Run(p StepParams) error {
-	step := DeleteStep{Folder: s.Folder, Ext: gitDeletes, Recurse: true}
+	ext := gitDeletes
+	ext = append(ext, codeDeletes...)
+	step := DeleteStep{Folder: s.Folder, Ext: ext, Recurse: true}
+	return step.Run(p)
+}
+
+// DeleteUnityStep deletes Unity-related data.
+type DeleteUnityStep struct {
+	Folder string
+}
+
+func (s DeleteUnityStep) Run(p StepParams) error {
+	ext := unityDeletes
+	ext = append(ext, mediaDeletes...)
+	// Ton of stuff with no extension, as far as I can tell it's junk
+	ext = append(ext, "")
+	step := DeleteStep{Folder: s.Folder, Ext: ext, Recurse: true}
 	return step.Run(p)
 }
 
@@ -194,7 +223,7 @@ func (s DeleteStep) Run(p StepParams) error {
 		if d.IsDir() && !s.Recurse {
 			return fs.SkipDir
 		}
-		if s.needsDelete(path) {
+		if !d.IsDir() && s.needsDelete(path) {
 			abs := filepath.Join(s.Folder, path)
 			fmt.Println("delete ", abs)
 			if d.IsDir() {
@@ -209,7 +238,7 @@ func (s DeleteStep) Run(p StepParams) error {
 }
 
 func (s DeleteStep) needsDelete(path string) bool {
-	ext := filepath.Ext(path)
+	ext := strings.ToLower(filepath.Ext(path))
 	for _, cmp := range s.Ext {
 		if ext == cmp {
 			return true
@@ -218,11 +247,75 @@ func (s DeleteStep) needsDelete(path string) bool {
 	return false
 }
 
+// DeleteEmptyFoldersStep deletes any folders with no contents.
+type DeleteEmptyFoldersStep struct {
+	Folder     string
+	IncludeGit bool // A hack to also include the .git folder which should have been accounted for in the delete git step but wasn't.
+}
+
+func (s DeleteEmptyFoldersStep) Run(p StepParams) error {
+	fmt.Println("delete empty folders", s.Folder)
+	more, err := s.deleteOne(p)
+	for more == true && err == nil {
+		more, err = s.deleteOne(p)
+	}
+	return err
+}
+
+// deleteOne deletes any empty folders it finds, returning
+// true if it deleted something.
+func (s DeleteEmptyFoldersStep) deleteOne(p StepParams) (bool, error) {
+	parent := s.Folder
+	f := os.DirFS(parent)
+	ans := false
+	err := fs.WalkDir(f, ".", func(path string, d fs.DirEntry, err error) error {
+		if path == "." {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if ans == true {
+			return fs.SkipDir
+		}
+		base := filepath.Base(path)
+		fullpath := filepath.Join(parent, path)
+		if s.IncludeGit == true && base == ".git" {
+			fmt.Println("Delete", fullpath)
+			ans = true
+			return os.RemoveAll(fullpath)
+		}
+		//		ok, err := fsDirEmpty(f, path)
+		//		fmt.Println("isempty", path, "ok", ok, "err", err)
+		if s.isEmpty(f, path) {
+			fmt.Println("Delete", fullpath)
+			ans = true
+			return os.Remove(fullpath)
+		}
+		return nil
+	})
+	return ans, err
+}
+
+func (s DeleteEmptyFoldersStep) isEmpty(f fs.FS, path string) bool {
+	ok, err := fsDirEmpty(f, path)
+	if err != nil {
+		err = fmt.Errorf("path: %v, err: %w", path, err)
+	}
+	checkErr(err)
+	return ok
+}
+
 // ------------------------------------------------------------
 // CONST and VAR
 
 var (
-	gitDeletes = []string{`.git`, `.github`, `.gitignore`}
+	gitDeletes   = []string{`.git`, `.github`, `.gitignore`, `.gitattributes`}
+	codeDeletes  = []string{`.sig`, `.dbg`, `.targets`, `.pri`, `.pack`, `.props`, `.user`, `.zip`, `.p7s`, `.pdb`, `.config`, `.sample`, `.bat`, `.idx`, `.json`, `.xcworkspacedata`, `.name`, `.pro`}
+	unityDeletes = []string{`.doc`, `.rendertexture`, `.pdb`, `.meta`, `.unity`, `.unitypackage`, `.prefab`, `.aar`, `.pak`, `.dat`, `.info`, `.strings`, `.mat`, `.cubemap`, `.anim`, `.guiskin`, `.shadervariants`, `.shadergraph`, `.7z`, `.asset`, `.bin`, `.physicmaterial`, `.rsp`, `.example`, `.modulemap`, `.pem`, `.colors`, `.touchosc`, `.bytes`, `.asmref`, `.gradle`, `.exp`, `.iuml`, `.savedsearch`, `.editorconfig`, `.appxmanifest`, `.blend`}
+	mediaDeletes = []string{`.ai`, `.dae`, `.exr`, `.fbx`, `.hdr`, `.jpg`, `.nib`, `.pdf`, `.png`, `.psd`, `.tga`, `.tif`, `.ttf`, `.gltf`, `.glb`, `.wav`, `.otf`, `.txt`, `.xml`, `.icns`, `.rtf`, `.puml`, `.csv`, `.md`, `.xaml`}
 
 	errSshNotValid = fmt.Errorf("SSH not valid")
+
+	errDeletedOne = fmt.Errorf("Deleted one")
 )
